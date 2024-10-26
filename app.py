@@ -17,6 +17,7 @@ import re
 from rank_bm25 import BM25Okapi
 import tempfile
 from openai import OpenAI
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -129,23 +130,41 @@ def process_pdfs_and_cache(input_folder, output_folder, strategy):
             combined_content = json.load(f)
     else:
         combined_content = []
-        for filename in glob.glob(os.path.join(input_folder, "*.pdf")):
-            with open(filename, "rb") as file:
-                partition_params = shared.PartitionParameters(
-                    files=shared.Files(
-                        content=file.read(),
-                        file_name=filename,
-                    ),
-                    strategy=strategy,
-                )
-                req = operations.PartitionRequest(
-                    partition_parameters=partition_params
-                )
-                res = s.general.partition(request=req)
-                combined_content.extend(res.elements)
+        pdf_files = glob.glob(os.path.join(input_folder, "*.pdf"))
+        
+        if not pdf_files:
+            raise ValueError(f"No PDF files found in {input_folder}")
+            
+        total_files = len(pdf_files)
+        for idx, filename in enumerate(pdf_files, 1):
+            st.write(f"Processing file {idx}/{total_files}: {os.path.basename(filename)}")
+            
+            try:
+                with open(filename, "rb") as file:
+                    partition_params = shared.PartitionParameters(
+                        files=shared.Files(
+                            content=file.read(),
+                            file_name=os.path.basename(filename),
+                        ),
+                        strategy=strategy,
+                    )
+                    req = operations.PartitionRequest(
+                        partition_parameters=partition_params
+                    )
+                    res = s.general.partition(request=req)
+                    combined_content.extend(res.elements)
+                    st.write(f"✅ Successfully processed {os.path.basename(filename)}")
+            except Exception as e:
+                st.error(f"Error processing {os.path.basename(filename)}: {str(e)}")
+                continue
 
-        with open(cache_file_path, 'w', encoding='utf-8') as f:
-            json.dump(combined_content, f)
+        # Save the combined results
+        if combined_content:
+            with open(cache_file_path, 'w', encoding='utf-8') as f:
+                json.dump(combined_content, f)
+            st.success(f"Successfully processed {total_files} files and saved to cache")
+        else:
+            st.error("No content was successfully processed")
 
     return combined_content
 
@@ -275,33 +294,51 @@ def get_cache_folders():
     cache_dir = "./cache"
     return [f for f in os.listdir(cache_dir) if f.endswith('_combined_content.json')]
 
-def process_uploaded_pdf(uploaded_file):
+def create_cache_key(files):
+    """Create a unique cache key based on filenames and their modification times"""
+    files_info = []
+    for file in files:
+        # Get filename and content length as a simple hash
+        file_info = f"{file.name}_{len(file.getvalue())}"
+        files_info.append(file_info)
+    
+    # Sort to ensure same files in different order get same key
+    files_info.sort()
+    # Join all file info and create a short hash
+    combined_info = "_".join(files_info)
+    return f"multi_pdf_{hash(combined_info)}_combined_content.json"
+
+def process_uploaded_files(uploaded_files):
+    """Process multiple uploaded files and return cache file name"""
     output_folder = "./cache"
-    cache_file_name = f"{uploaded_file.name}_combined_content.json"
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Create a cache key based on the uploaded files
+    cache_file_name = create_cache_key(uploaded_files)
     cache_file_path = os.path.join(output_folder, cache_file_name)
 
-    # Check if the file has already been processed
+    # Check if these exact files have already been processed
     if os.path.exists(cache_file_path):
-        st.info("This file has already been processed. Using existing cache.")
+        st.info("These files have already been processed. Using existing cache.")
         return cache_file_name
 
+    # Process the files if not in cache
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_file_path = os.path.join(temp_dir, uploaded_file.name)
-        with open(temp_file_path, "wb") as f:
-            f.write(uploaded_file.getvalue())
+        # Save all uploaded files to temp directory
+        for uploaded_file in uploaded_files:
+            temp_file_path = os.path.join(temp_dir, uploaded_file.name)
+            with open(temp_file_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
         
+        # Process all PDFs in the temporary directory
         strategy = "auto"
         combined_content = process_pdfs_and_cache(temp_dir, output_folder, strategy)
         
         # Save the cache file
         with open(cache_file_path, 'w', encoding='utf-8') as f:
             json.dump(combined_content, f)
-        
+    
     return cache_file_name
-
-def get_cache_folders():
-    cache_dir = "./cache"
-    return [f for f in os.listdir(cache_dir) if f.endswith('_combined_content.json')]
 
 # Add this to the existing functions
 def process_query(query, retriever, k, conversation_history, verbose=False):
@@ -322,15 +359,18 @@ def main():
     with st.sidebar:
         verbose = st.toggle("Debug Mode (Verbose)", value=False)
 
+    # File upload option - modified to accept multiple files
+    uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
 
-    # File upload option
-    uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
-
-    if uploaded_file:
-        with st.spinner("Processing uploaded PDF... This may take a while."):
-            cache_file_name = process_uploaded_pdf(uploaded_file)
-        st.success("PDF processed successfully!")
-        st.session_state.selected_folder = cache_file_name
+    if uploaded_files:
+        with st.spinner("Processing uploaded PDFs... This may take a while."):
+            try:
+                cache_file_name = process_uploaded_files(uploaded_files)
+                st.success("PDFs processed successfully!")
+                st.session_state.selected_folder = cache_file_name
+            except Exception as e:
+                st.error(f"Error processing PDFs: {str(e)}")
+                return
 
     # Get available folders
     folder_options = get_cache_folders()
@@ -402,6 +442,10 @@ def initialize_retriever_from_cache(cache_file_path):
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 

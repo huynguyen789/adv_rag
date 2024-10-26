@@ -18,3 +18,7 @@ build/
 
 # VS Code specific files
 .vscode/›
+
+#ignore the huy nguyen resume./test/newest_Huy_Nguyen_Resume.pdf 
+test/newest_Huy_Nguyen_Resume.pdf 
+
