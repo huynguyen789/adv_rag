@@ -9,8 +9,7 @@ from unstructured.chunking.title import chunk_by_title
 from langchain.schema import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+
 import json
 from typing import List, Tuple
 import re
@@ -18,6 +17,10 @@ from rank_bm25 import BM25Okapi
 import tempfile
 from openai import OpenAI
 from datetime import datetime
+import logging
+
+# Disable OpenAI request logging
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 # Load environment variables
 load_dotenv()
@@ -117,54 +120,60 @@ class EnhancedRetriever:
         scored_docs = [(score, self.documents[i]) for i, score in enumerate(bm25_scores)]
         return sorted(scored_docs, key=lambda x: x[0], reverse=True)[:k]
 
-def process_pdfs_and_cache(input_folder, output_folder, strategy):
-    # Initialize the UnstructuredClient
+def process_pdfs_and_cache(input_folder, output_folder, strategy, cache_file_path=None):
+    """Process PDFs and cache results. If cache_file_path is provided, use that instead of generating one."""
     s = UnstructuredClient(api_key_auth=unstructured_api_key, server_url='https://redhorse-d652ahtg.api.unstructuredapp.io')
 
     os.makedirs(output_folder, exist_ok=True)
-    folder_name = os.path.basename(os.path.normpath(input_folder))
-    cache_file_path = os.path.join(output_folder, f'{folder_name}_combined_content.json')
-
+    
+    # If no specific cache path provided, generate one from the input folder
+    if cache_file_path is None:
+        folder_name = os.path.basename(os.path.normpath(input_folder))
+        cache_file_path = os.path.join(output_folder, f'{folder_name}_combined_content.json')
+    
+    # Check if cache exists first
     if os.path.exists(cache_file_path):
+        st.info("Using cached version of the processed files.")
         with open(cache_file_path, 'r', encoding='utf-8') as f:
-            combined_content = json.load(f)
-    else:
-        combined_content = []
-        pdf_files = glob.glob(os.path.join(input_folder, "*.pdf"))
+            return json.load(f)
+            
+    # Only process if cache doesn't exist
+    combined_content = []
+    pdf_files = glob.glob(os.path.join(input_folder, "*.pdf"))
+    
+    if not pdf_files:
+        raise ValueError(f"No PDF files found in {input_folder}")
         
-        if not pdf_files:
-            raise ValueError(f"No PDF files found in {input_folder}")
-            
-        total_files = len(pdf_files)
-        for idx, filename in enumerate(pdf_files, 1):
-            st.write(f"Processing file {idx}/{total_files}: {os.path.basename(filename)}")
-            
-            try:
-                with open(filename, "rb") as file:
-                    partition_params = shared.PartitionParameters(
-                        files=shared.Files(
-                            content=file.read(),
-                            file_name=os.path.basename(filename),
-                        ),
-                        strategy=strategy,
-                    )
-                    req = operations.PartitionRequest(
-                        partition_parameters=partition_params
-                    )
-                    res = s.general.partition(request=req)
-                    combined_content.extend(res.elements)
-                    st.write(f"✅ Successfully processed {os.path.basename(filename)}")
-            except Exception as e:
-                st.error(f"Error processing {os.path.basename(filename)}: {str(e)}")
-                continue
+    total_files = len(pdf_files)
+    for idx, filename in enumerate(pdf_files, 1):
+        st.write(f"Processing file {idx}/{total_files}: {os.path.basename(filename)}")
+        
+        try:
+            with open(filename, "rb") as file:
+                partition_params = shared.PartitionParameters(
+                    files=shared.Files(
+                        content=file.read(),
+                        file_name=os.path.basename(filename),
+                    ),
+                    strategy=strategy,
+                )
+                req = operations.PartitionRequest(
+                    partition_parameters=partition_params
+                )
+                res = s.general.partition(request=req)
+                combined_content.extend(res.elements)
+                st.write(f"✅ Successfully processed {os.path.basename(filename)}")
+        except Exception as e:
+            st.error(f"Error processing {os.path.basename(filename)}: {str(e)}")
+            continue
 
-        # Save the combined results
-        if combined_content:
-            with open(cache_file_path, 'w', encoding='utf-8') as f:
-                json.dump(combined_content, f)
-            st.success(f"Successfully processed {total_files} files and saved to cache")
-        else:
-            st.error("No content was successfully processed")
+    # Save directly to cache file if processing was successful
+    if combined_content:
+        with open(cache_file_path, 'w', encoding='utf-8') as f:
+            json.dump(combined_content, f)
+        st.success(f"Successfully processed {total_files} files and saved to cache")
+    else:
+        st.error("No content was successfully processed")
 
     return combined_content
 
@@ -295,18 +304,28 @@ def get_cache_folders():
     return [f for f in os.listdir(cache_dir) if f.endswith('_combined_content.json')]
 
 def create_cache_key(files):
-    """Create a unique cache key based on filenames and their modification times"""
+    """Create a unique cache key based on file contents and names"""
+    # Get the names of all files, stripped of extensions
+    file_names = [os.path.splitext(file.name)[0] for file in files]
+    file_names.sort()  # Sort for consistency
+    
+    # Create a content-based hash that will be the same for the same files
     files_info = []
     for file in files:
-        # Get filename and content length as a simple hash
-        file_info = f"{file.name}_{len(file.getvalue())}"
+        content_hash = hash(file.getvalue())  # Hash of file content
+        file_info = f"{file.name}_{content_hash}"
         files_info.append(file_info)
+    files_info.sort()  # Sort for consistency
+    content_hash = hash("_".join(files_info))
     
-    # Sort to ensure same files in different order get same key
-    files_info.sort()
-    # Join all file info and create a short hash
-    combined_info = "_".join(files_info)
-    return f"multi_pdf_{hash(combined_info)}_combined_content.json"
+    # Create a readable prefix from file names
+    if len(file_names) <= 3:
+        files_preview = "_".join(file_names)
+    else:
+        files_preview = f"{file_names[0]}_{file_names[1]}_and_{len(file_names)-2}_more"
+    
+    # Create final filename: readable prefix + content hash + suffix
+    return f"{files_preview}_{abs(content_hash)}_combined_content.json"
 
 def process_uploaded_files(uploaded_files):
     """Process multiple uploaded files and return cache file name"""
@@ -332,11 +351,7 @@ def process_uploaded_files(uploaded_files):
         
         # Process all PDFs in the temporary directory
         strategy = "auto"
-        combined_content = process_pdfs_and_cache(temp_dir, output_folder, strategy)
-        
-        # Save the cache file
-        with open(cache_file_path, 'w', encoding='utf-8') as f:
-            json.dump(combined_content, f)
+        process_pdfs_and_cache(temp_dir, output_folder, strategy, cache_file_path)
     
     return cache_file_name
 
@@ -345,6 +360,14 @@ def process_query(query, retriever, k, conversation_history, verbose=False):
     context = "\n".join([f"User: {q}\nAI: {a}" for q, a in conversation_history])
     full_query = f"Conversation history:\n{context}\n\nUser's new query: {query}"
     return rag_query_enhanced(full_query, retriever, k=k, verbose=verbose)
+@st.cache_resource
+def initialize_retriever_from_cache(cache_file_path):
+    with open(cache_file_path, 'r', encoding='utf-8') as f:
+        combined_content = json.load(f)
+    documents = process_data(combined_content)
+    embeddings = OpenAIEmbeddings()
+    vectorstore = FAISS.from_documents(documents, embeddings)
+    return EnhancedRetriever(vectorstore, documents)
 
 
 def main():
@@ -431,17 +454,14 @@ def main():
         st.session_state.conversation_history = []
         st.rerun()
 
-@st.cache_resource
-def initialize_retriever_from_cache(cache_file_path):
-    with open(cache_file_path, 'r', encoding='utf-8') as f:
-        combined_content = json.load(f)
-    documents = process_data(combined_content)
-    embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_documents(documents, embeddings)
-    return EnhancedRetriever(vectorstore, documents)
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
 
 
 
