@@ -1,0 +1,20 @@
+# Python virtual environment
+venv/
+env/
+.env
+streamlit/
+#ignore the toml file
+.streamlit/secrets.toml
+
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# VS Code specific files
+.vscode/›

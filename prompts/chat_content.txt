@@ -1,0 +1,20 @@
+History of conversation:
+{conversation_history}
+end of History of conversation.
+_____________________________________________________
+
+
+
+User query:
+{query}
+end of User query.
+_____________________________________________________
+
+Consider user feedbacks if exists:
+{user_feedback}
+end of user feedbacks.
+_____________________________________________________
+
+Asistant:
+Based on the far system instructions, file content, recent conversation, user feedback(if exists) and user query.
+Here is my highly accurate answer based on the FAR file content, recent conversation and user query, with citations to the relevant FAR sections:

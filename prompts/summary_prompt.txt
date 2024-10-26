@@ -1,0 +1,8 @@
+Summarize the following conversation about the Federal Acquisition Regulation (FAR) in about 200 words. 
+Focus on the main topics discussed, key questions asked, and important information provided. 
+Highlight any specific FAR sections mentioned.
+
+Conversation:
+{conversation}
+
+Summary:
