@@ -146,7 +146,6 @@ def process_pdfs_and_cache(input_folder, output_folder, strategy):
 
     return combined_content
 
-
 def process_data(combined_content):
     pdf_elements = dict_to_elements(combined_content)
     elements = chunk_by_title(pdf_elements, combine_text_under_n_chars=4000, max_characters=8000, new_after_n_chars=7000, overlap=1000)
@@ -180,6 +179,17 @@ def organize_documents(docs):
 
 def generate_answer(query: str, relevant_data: str):
     prompt = f"""
+    <retrieval data>
+    {relevant_data}
+    </retrieval data>
+    \n\n
+    <user query>
+    {query}
+    </user query>
+    
+    
+    \n\n\n\n
+    <instructions>
     You are a knowledgeable assistant specializing in document analysis and explanation.
 
     Task: Answer the user's query based on the provided relevant data.
@@ -191,16 +201,12 @@ def generate_answer(query: str, relevant_data: str):
     - Use natural, professional language
 
     Format your response in 3 parts:
-    1. TLDR: One-paragraph executive summary
-    2. Details: Comprehensive explanation with examples where relevant
-    3. Sources: Reference specific documents/pages used
-
-    Retrieval data:
-    {relevant_data}
-    
-    User query: {query}
+    1. TLDR: Short and concise answer. 
+    2. Details: Comprehensive answer with exact words in quotation marks (as much as possible) and examples where relevant. 
+    3. Sources: Reference specific documents/pages used, links. 
     
     Answer in a nice markdown format:
+    </instructions>
     """
 
     response = client.chat.completions.create(
@@ -265,7 +271,6 @@ def rag_query_enhanced(user_query: str, enhanced_retriever: EnhancedRetriever, k
 def get_cache_folders():
     cache_dir = "./cache"
     return [f for f in os.listdir(cache_dir) if f.endswith('_combined_content.json')]
-
 
 def process_uploaded_pdf(uploaded_file):
     output_folder = "./cache"
