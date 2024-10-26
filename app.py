@@ -3,7 +3,7 @@ import os
 import glob
 from dotenv import load_dotenv
 from unstructured_client import UnstructuredClient
-from unstructured_client.models import shared
+from unstructured_client.models import shared, operations
 from unstructured.staging.base import dict_to_elements
 from unstructured.chunking.title import chunk_by_title
 from langchain.schema import Document
@@ -131,14 +131,17 @@ def process_pdfs_and_cache(input_folder, output_folder, strategy):
         combined_content = []
         for filename in glob.glob(os.path.join(input_folder, "*.pdf")):
             with open(filename, "rb") as file:
-                req = shared.PartitionParameters(
+                partition_params = shared.PartitionParameters(
                     files=shared.Files(
                         content=file.read(),
                         file_name=filename,
                     ),
                     strategy=strategy,
                 )
-                res = s.general.partition(req)
+                req = operations.PartitionRequest(
+                    partition_parameters=partition_params
+                )
+                res = s.general.partition(request=req)
                 combined_content.extend(res.elements)
 
         with open(cache_file_path, 'w', encoding='utf-8') as f:
@@ -399,6 +402,7 @@ def initialize_retriever_from_cache(cache_file_path):
 
 if __name__ == "__main__":
     main()
+
 
 
 
