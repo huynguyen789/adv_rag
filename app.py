@@ -188,14 +188,6 @@ def process_data(combined_content):
         documents.append(Document(page_content=element.text, metadata=metadata))
     return documents
 
-@st.cache_resource
-def initialize_retriever(folder_path):
-    strategy = "auto"
-    combined_content = process_pdfs_and_cache(folder_path, "./cache", strategy)
-    documents = process_data(combined_content)
-    embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_documents(documents, embeddings)
-    return EnhancedRetriever(vectorstore, documents)
 
 def organize_documents(docs):
     organized_text = ""
@@ -218,18 +210,14 @@ def generate_answer(query: str, relevant_data: str):
     {query}
     </user query>
     
-    
     \n\n\n\n
     <instructions>
-    You are a knowledgeable assistant specializing in document analysis and explanation.
-
-    Task: Answer the user's query based on the provided relevant data.
+    You are a world-class RAG system. Your task is to give exceptional, useful, and truthful answers, based on the user's query and the provided relevant data.
 
     Guidelines:
-    - Provide clear, accurate answers using only the given information
+    - Provide clear, accurate answers using only the given information. If information is insufficient, acknowledge limitations.
     - Connect related sections if they appear fragmented (check section numbers)
-    - If information is insufficient, acknowledge limitations
-    - Use natural, professional language
+    - Use natural, easy to understand language.
 
     Format your response in 3 parts:
     1. TLDR: Short and concise answer. 
@@ -303,8 +291,8 @@ def get_cache_folders():
     cache_dir = "./cache"
     return [f for f in os.listdir(cache_dir) if f.endswith('_combined_content.json')]
 
-def create_cache_key(files):
-    """Create a unique cache key based on file contents and names"""
+def create_cache_key(files, custom_name=None):
+    """Create a unique cache key based on file contents and custom name if provided"""
     # Get the names of all files, stripped of extensions
     file_names = [os.path.splitext(file.name)[0] for file in files]
     file_names.sort()  # Sort for consistency
@@ -318,22 +306,25 @@ def create_cache_key(files):
     files_info.sort()  # Sort for consistency
     content_hash = hash("_".join(files_info))
     
-    # Create a readable prefix from file names
-    if len(file_names) <= 3:
-        files_preview = "_".join(file_names)
+    # Use custom name if provided, otherwise create name from file names
+    if custom_name:
+        files_preview = custom_name
     else:
-        files_preview = f"{file_names[0]}_{file_names[1]}_and_{len(file_names)-2}_more"
+        if len(file_names) <= 3:
+            files_preview = "_".join(file_names)
+        else:
+            files_preview = f"{file_names[0]}_{file_names[1]}_and_{len(file_names)-2}_more"
     
     # Create final filename: readable prefix + content hash + suffix
     return f"{files_preview}_{abs(content_hash)}_combined_content.json"
 
-def process_uploaded_files(uploaded_files):
+def process_uploaded_files(uploaded_files, custom_name=None):
     """Process multiple uploaded files and return cache file name"""
     output_folder = "./cache"
     os.makedirs(output_folder, exist_ok=True)
     
     # Create a cache key based on the uploaded files
-    cache_file_name = create_cache_key(uploaded_files)
+    cache_file_name = create_cache_key(uploaded_files, custom_name)
     cache_file_path = os.path.join(output_folder, cache_file_name)
 
     # Check if these exact files have already been processed
@@ -370,6 +361,15 @@ def initialize_retriever_from_cache(cache_file_path):
     return EnhancedRetriever(vectorstore, documents)
 
 
+@st.cache_resource
+def initialize_retriever(folder_path):
+    strategy = "fast"
+    combined_content = process_pdfs_and_cache(folder_path, "./cache", strategy)
+    documents = process_data(combined_content)
+    embeddings = OpenAIEmbeddings()
+    vectorstore = FAISS.from_documents(documents, embeddings)
+    return EnhancedRetriever(vectorstore, documents)
+
 def main():
     st.title("Chat with your document")
     st.write("Ask questions about the Federal Acquisition Regulation (FAR) or upload your own PDF")
@@ -382,18 +382,24 @@ def main():
     with st.sidebar:
         verbose = st.toggle("Debug Mode (Verbose)", value=False)
 
-    # File upload option - modified to accept multiple files
+    # File upload section with custom name input
     uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
 
     if uploaded_files:
-        with st.spinner("Processing uploaded PDFs... This may take a while."):
-            try:
-                cache_file_name = process_uploaded_files(uploaded_files)
-                st.success("PDFs processed successfully!")
-                st.session_state.selected_folder = cache_file_name
-            except Exception as e:
-                st.error(f"Error processing PDFs: {str(e)}")
-                return
+        custom_name = st.text_input("Give these files a name (optional)", 
+                                  help="Enter a custom name for this set of files")
+        
+        process_button = st.button("Process Files")
+        if process_button:
+            with st.spinner("Processing uploaded PDFs... This may take a while."):
+                try:
+                    cache_file_name = process_uploaded_files(uploaded_files, custom_name)
+                    st.success("PDFs processed successfully!")
+                    st.session_state.selected_folder = cache_file_name
+                    st.rerun()  # Refresh to show the new option in the selectbox
+                except Exception as e:
+                    st.error(f"Error processing PDFs: {str(e)}")
+                    return
 
     # Get available folders
     folder_options = get_cache_folders()
